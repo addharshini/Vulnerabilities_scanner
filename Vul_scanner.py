@@ -1,5 +1,8 @@
-import requests
-from bs4 import BeautifulSoup
+import urllib.request
+import urllib.parse
+import urllib.error
+import html.parser
+import json
 from urllib.parse import urljoin
 
 # Define payloads for testing vulnerabilities
@@ -7,60 +10,97 @@ SQLI_PAYLOADS = ["' OR '1'='1", "' OR 'a'='a", "' OR 1=1 --", "' OR 'a'='a' --"]
 XSS_PAYLOADS = ["<script>alert('XSS')</script>", "<img src=x onerror=alert('XSS')>"]
 CSRF_PAYLOADS = ["csrf_token=malicious_token"]
 
-# Function to test for SQL Injection
+class FormParser(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.forms = []
+        self.current_form = None
+        self.current_input = None
+    
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'form':
+            self.current_form = {
+                'action': attrs.get('action', ''),
+                'method': attrs.get('method', 'get').lower(),
+                'inputs': []
+            }
+            self.forms.append(self.current_form)
+        elif tag == 'input' and self.current_form is not None:
+            self.current_form['inputs'].append({
+                'name': attrs.get('name', ''),
+                'value': attrs.get('value', '')
+            })
+
+def make_request(url, params=None, method='GET', data=None):
+    try:
+        if method.upper() == 'GET' and params:
+            url = f"{url}?{urllib.parse.urlencode(params)}"
+        
+        if method.upper() == 'POST' and data:
+            data = urllib.parse.urlencode(data).encode('utf-8')
+        else:
+            data = None
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        }
+        
+        req = urllib.request.Request(url, data=data, headers=headers)
+        with urllib.request.urlopen(req) as response:
+            return response.read().decode('utf-8')
+    except Exception as e:
+        print(f"Error making request: {str(e)}")
+        return ""
+
 def test_sqli(url, params):
     print(f"[*] Testing for SQL Injection on {url}")
     for payload in SQLI_PAYLOADS:
         test_params = {k: payload for k in params.keys()}
-        response = requests.get(url, params=test_params)
-        if "error" in response.text.lower() or "syntax" in response.text.lower():
+        response = make_request(url, params=test_params)
+        if "error" in response.lower() or "syntax" in response.lower():
             print(f"[!] Possible SQL Injection vulnerability found with payload: {payload}")
             return True
     print("[*] No SQL Injection vulnerabilities detected.")
     return False
 
-# Function to test for XSS
 def test_xss(url, params):
     print(f"[*] Testing for XSS on {url}")
     for payload in XSS_PAYLOADS:
         test_params = {k: payload for k in params.keys()}
-        response = requests.get(url, params=test_params)
-        if payload in response.text:
+        response = make_request(url, params=test_params)
+        if payload in response:
             print(f"[!] Possible XSS vulnerability found with payload: {payload}")
             return True
     print("[*] No XSS vulnerabilities detected.")
     return False
 
-# Function to test for CSRF
 def test_csrf(url, form_action):
     print(f"[*] Testing for CSRF on {url}")
     csrf_url = urljoin(url, form_action)
     for payload in CSRF_PAYLOADS:
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-        response = requests.post(csrf_url, data=payload, headers=headers)
-        if response.status_code == 200 and "success" in response.text.lower():
+        response = make_request(csrf_url, method='POST', data={'csrf_token': 'malicious_token'})
+        if response and "success" in response.lower():
             print(f"[!] Possible CSRF vulnerability found with payload: {payload}")
             return True
     print("[*] No CSRF vulnerabilities detected.")
     return False
 
-# Function to extract forms from a webpage
 def extract_forms(url):
-    response = requests.get(url)
-    soup = BeautifulSoup(response.content, "html.parser")
-    forms = soup.find_all("form")
-    return forms
+    response = make_request(url)
+    parser = FormParser()
+    parser.feed(response)
+    return parser.forms
 
-# Main function to scan a website
 def scan_website(url):
     print(f"[*] Scanning {url} for vulnerabilities...")
     forms = extract_forms(url)
 
     for form in forms:
-        action = form.get("action")
-        method = form.get("method", "get").lower()
-        inputs = form.find_all("input")
-        params = {input.get("name"): input.get("value", "") for input in inputs}
+        action = form['action']
+        method = form['method']
+        params = {input['name']: input['value'] for input in form['inputs']}
 
         if method == "get":
             target_url = urljoin(url, action)
@@ -70,7 +110,6 @@ def scan_website(url):
             target_url = urljoin(url, action)
             test_csrf(target_url, action)
 
-# Entry point
 if __name__ == "__main__":
     target_url = input("Enter the URL to scan: ")
     scan_website(target_url)

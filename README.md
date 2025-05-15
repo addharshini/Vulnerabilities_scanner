@@ -1,8 +1,7 @@
 # Vulnerabilities_scanner
 An user friendly tool that scans web applications for common vulnerabilities like SQL Injection, XSS, and CSRF
 
-# Required libraries:
-pip install requests beautifulsoup4
+This version uses Python's standard library (no additional dependencies required).
 
 # Run the script:
-python vulnerability_scanner.py
+python Vul_scanner.py
